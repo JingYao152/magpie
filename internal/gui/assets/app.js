@@ -7067,8 +7067,20 @@ function sortBy(list, items, onPick) {
   for (const [i, b] of [...box.querySelectorAll(".opt")].entries()) if (tips[items[i][0]]) b.title = tips[items[i][0]];
   return box;
 }
+// A name's order is the same on every machine: letters A→Z as English
+// sorts them, then the names that have Chinese in them, by pinyin. The
+// system's own collation is no help: on a Chinese system it puts every
+// name with a character of Chinese in a block before the letters, whatever
+// they start with (商汤 under A, not S), and on an English one after them,
+// so one list read on two machines came out two ways (#4325).
+const HAN = /[㐀-鿿豈-﫿]/;
+const latinOrder = new Intl.Collator("en"), hanOrder = new Intl.Collator("zh-u-co-pinyin");
+const nameOrder = (a, b) => {
+  const x = HAN.test(a), y = HAN.test(b);
+  return x !== y ? (x ? 1 : -1) : (x ? hanOrder : latinOrder).compare(a, b);
+};
 // a comparer of names for a pick: A→Z, or Z→A
-const byName = (pick, nameOf = (x) => x.name) => (a, b) => (pick === "za" ? -1 : 1) * nameOf(a).localeCompare(nameOf(b));
+const byName = (pick, nameOf = (x) => x.name) => (a, b) => (pick === "za" ? -1 : 1) * nameOrder(nameOf(a) || "", nameOf(b) || "");
 
 // A small highlighter for the four snippet dialects: strings, comments,
 // keywords, numbers, calls, and the env vars and flags shells care about.

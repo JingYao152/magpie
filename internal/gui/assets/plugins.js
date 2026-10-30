@@ -25,6 +25,15 @@
   let tab = "discover";
   try { tab = localStorage.getItem("magpie.pluginTab") || tab; } catch {}
   let query = "";
+  // Discover's order, the reader's pick (#4325), remembered for the page as an
+  // installed list's is (#481): the market's own, names A→Z, or the popular
+  // ones first, by what each kind of card is read for—npm's downloads last
+  // week of a plugin, GitHub's stars of a repository. Said in the reader's
+  // language, so made when it is drawn
+  const sortItems = () => [["", t("Default")], ["az", "A→Z"], ["pop", t("Popular")]];
+  let sortPick = "";
+  try { sortPick = localStorage.getItem("magpie.sort.discover") || ""; } catch {}
+  if (!["", "az", "pop"].includes(sortPick)) sortPick = "";
   let hits = null;       // npm's answer for query: { q, list } | { q, loading } | { q, error }
   let searchTimer = 0;
   const busy = new Map(); // package → "add" | "remove" | "upgrade" | "off"
@@ -204,7 +213,9 @@
     merge();
   }
   // what npm says of the plugins suggested and those installed: drawn
-  // when it comes, never waited on
+  // when it comes, never waited on. The repositories on GitHub are left
+  // out: npm's downloads answer turns about a hundred a burst away (429),
+  // and magpie records a refused one as none (#4325)
   async function askNPM(only) {
     const names = [...new Set([...(listings || []).map((l) => l.package), ...(mine?.plugins || []).filter((e) => onNPM(e.spec)).map((e) => name(e.spec))])]
       .filter((n) => !only || !npm[n]);
@@ -624,6 +635,20 @@
     return g;
   }
 
+  // a card list in the reader's pick: a name A→Z, as an installed list's
+  // (#481), or the popular ones first, by the card's own kind—npm's downloads
+  // last week of a plugin ("npm"), GitHub's stars of a repository
+  // ("stars")—what the card says nothing of behind them. A sort is stable, so
+  // a tie, and the market's own order, keep the order they came in
+  const ordered = (list, popular) => {
+    if (sortPick === "az") return [...list].sort(byName("az", (l) => l.name || l.package));
+    if (sortPick === "pop") {
+      const of = popular === "stars" ? (l) => l.github?.stars || 0 : (l) => l.npm?.weekly ?? l.weekly ?? 0;
+      return [...list].sort((a, b) => of(b) - of(a));
+    }
+    return list;
+  };
+
   function section(title, hint, list) {
     const box = el("section", "pm-sec");
     const h = el("div", "pm-sechead");
@@ -845,7 +870,8 @@
     if (q.value !== query) q.value = query;
     q.setAttribute("aria-label", t("Search plugins"));
     mirror = mirrorSwitch();
-    replaceKeeping(headBox, [tabs, el("span", "grow"), mirror, find]);
+    sorts = sortSwitch();
+    replaceKeeping(headBox, [tabs, el("span", "grow"), sorts, mirror, find]);
     searchShown();
     headBox.classList.toggle("stuck", page.scrollTop > 0);
     return headBox;
@@ -858,10 +884,14 @@
   // the built-in plugins are a short list of switches: nothing to search
   // or fetch through a mirror
   let mirror = null;
+  // Discover's order, and the only tab it is a question of
+  let sorts = null;
   function searchShown() {
     find.hidden = tab === "builtin";
+    if (sorts) sorts.hidden = tab !== "discover";
     if (mirror) mirror.hidden = !mine || tab === "builtin";
   }
+  function sortSwitch() { return sortBy("discover", sortItems(), (id) => { sortPick = id; drawBody(); }); }
   function mirrorSwitch() {
     const on = !!mine?.mirror;
     const b = el("button", "pm-mirror" + (on ? " on" : ""));
@@ -937,10 +967,10 @@
     }
     const f = query.trim().toLowerCase();
     const match = (l) => !f || [l.name, l.package, summary(l), (l.providers || []).join(" "), l.npm?.publisher || ""].join(" ").toLowerCase().includes(f);
-    const ls = listings.filter(match);
+    const ls = ordered(listings.filter(match), "npm");
     // a tagged repository the market already lists is the market's card
     const listed = new Set(listings.map((l) => l.package));
-    const gh = (tagged || []).filter((l) => !(l.github.package && listed.has(l.github.package)) && match(l));
+    const gh = ordered((tagged || []).filter((l) => !(l.github.package && listed.has(l.github.package)) && match(l)), "stars");
     // put in place around the GitHub section, which stays in the page
     const out = [];
     if (!f) {
@@ -987,7 +1017,7 @@
     else if (hits.loading) box.append(skeleton(2));
     else if (hits.error) box.append(el("p", "pm-note bad", hits.error));
     else {
-      const list = hits.list.filter((x) => !known.has(x.package));
+      const list = ordered(hits.list.filter((x) => !known.has(x.package)), "npm");
       if (!list.length) box.append(el("p", "pm-note", ls.length ? t("Nothing else on npm") : t("No plugin called “{q}”", { q: query.trim() })));
       const g = el("div", "pm-grid");
       for (const x of list) g.append(card({ package: x.package, name: x.package, npm: x }));
